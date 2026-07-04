@@ -66,7 +66,7 @@ def main():
     print()
 
     model.learn(
-        total_timesteps=5000000,
+        total_timesteps=100000000,
         callback=eval_callback,
     )
 
