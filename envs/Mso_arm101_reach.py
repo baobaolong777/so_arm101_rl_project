@@ -120,7 +120,7 @@ class SoArm101ReachEnv(gym.Env):
         distance = np.linalg.norm(ee_pos - self.target_pos)
 
         # 距离惩罚
-        reward = -distance
+        reward = -distance * 10
 
         if distance <0.02:
             reward +=100
