@@ -1,0 +1,9 @@
+<?xml version="1.0" ?>
+<mujoco model="scene_with_target">
+    <include file="assets/so101_new_calib.xml"/>
+    <worldbody>
+        <body name="target" pos="0 0 0.3">
+            <geom type="sphere" size="0.02" rgba="1 0 0 0.8" contype="0" conaffinity="0"/>
+        </body>
+    </worldbody>
+</mujoco>
