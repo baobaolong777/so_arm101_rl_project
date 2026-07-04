@@ -45,6 +45,7 @@ class SoArm101ReachEnv(gym.Env):
         self.target_pos = None
         self.max_steps = 300  # 改为300步
         self.current_step = 0
+        self.success_dis = 0.02
     
     def reset(self,seed=None, options=None):
         super().reset(seed=seed)
@@ -119,20 +120,25 @@ class SoArm101ReachEnv(gym.Env):
         ee_pos = self.data.site_xpos[self.ee_site_id]
         distance = np.linalg.norm(ee_pos - self.target_pos)
 
-        # 距离惩罚
-        reward = -distance * 10
-
-        if distance <0.02:
-            reward +=100
+        if distance < self.success_dis:
+            dis_reward = 100
+        elif distance < 2 * self.success_dis:
+            dis_reward = 50
+        elif distance < 3 * self.success_dis:
+            dis_reward = 10
+        else:
+            dis_reward = 1/(1 + distance)
 
         # 步惩罚
-        reward -= 0.01
+        time_penalty = 0.01
+        
+        total_reward = dis_reward - time_penalty
 
-        return reward
+        return total_reward
     
     def _check_success(self):
         ee_pos = self.data.site_xpos[self.ee_site_id]
-        return np.linalg.norm(ee_pos - self.target_pos) < 0.02
+        return np.linalg.norm(ee_pos - self.target_pos) < self.success_dis
 
     def close(self):
         if hasattr(self, "renderer"):
