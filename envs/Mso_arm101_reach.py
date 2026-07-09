@@ -57,7 +57,7 @@ class SoArm101ReachEnv(gym.Env):
         self.target_pos = None
         self.max_steps = 300  # 改为300步
         self.current_step = 0
-        self.success_dis = 0.02
+        self.success_dis = 0.05
     
     def _get_valid_target(self) -> np.ndarray:
         """生成有效目标点（在工作空间内且可达）"""
@@ -151,7 +151,7 @@ class SoArm101ReachEnv(gym.Env):
         # 计算奖励
         reward = self._compute_reward()
 
-        terminated = self._check_success()
+        terminated = False  # 到达目标不终止，让智能体在目标附近积累正奖励
         truncated = self.current_step >= self.max_steps
 
         if self.render_mode == "human":
