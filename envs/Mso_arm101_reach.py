@@ -143,8 +143,12 @@ class SoArm101ReachEnv(gym.Env):
             ctrl_low = self.model.actuator_ctrlrange[i,0]
             ctrl_high = self.model.actuator_ctrlrange[i,1]
             self.data.ctrl[i] = ctrl_low + (action[i] + 1.0) * 0.5 * (ctrl_high - ctrl_low)
-        
-        mujoco.mj_step(self.model,self.data)
+
+        # 每个action执行20个物理步（0.04s），让位置控制器有时间驱动关节到位
+        physics_steps_per_action = 20
+        for _ in range(physics_steps_per_action):
+            mujoco.mj_step(self.model, self.data)
+
         self.current_step += 1
         # 获取观测
         obs = self._get_obs()
