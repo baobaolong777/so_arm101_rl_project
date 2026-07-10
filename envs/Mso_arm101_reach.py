@@ -55,9 +55,10 @@ class SoArm101ReachEnv(gym.Env):
 
         # 目标位置
         self.target_pos = None
-        self.max_steps = 300  # 改为300步
+        self.max_steps = 300
         self.current_step = 0
-        self.success_dis = 0.05
+        self.success_dis = 0.1  # 课程学习：先从0.1m开始，逐步收紧到0.02m
+        self.prev_distance = None  # 用于计算进步奖励
     
     def _get_valid_target(self) -> np.ndarray:
         """生成有效目标点（在工作空间内且可达）"""
@@ -128,6 +129,9 @@ class SoArm101ReachEnv(gym.Env):
                 mujoco.mj_forward(self.model,self.data)
 
         self.current_step = 0
+        # 初始化prev_distance用于进步奖励
+        ee_pos = self.data.site_xpos[self.ee_site_id]
+        self.prev_distance = np.linalg.norm(ee_pos - self.target_pos)
 
         # 更新目标球位置（使用mocap_pos）
         if self.target_mocap_pos_id is not None:
@@ -144,8 +148,8 @@ class SoArm101ReachEnv(gym.Env):
             ctrl_high = self.model.actuator_ctrlrange[i,1]
             self.data.ctrl[i] = ctrl_low + (action[i] + 1.0) * 0.5 * (ctrl_high - ctrl_low)
 
-        # 每个action执行20个物理步（0.04s），让位置控制器有时间驱动关节到位
-        physics_steps_per_action = 20
+        # 每个action执行50个物理步（0.1s），让位置控制器有足够时间驱动关节到位
+        physics_steps_per_action = 50
         for _ in range(physics_steps_per_action):
             mujoco.mj_step(self.model, self.data)
 
@@ -191,21 +195,25 @@ class SoArm101ReachEnv(gym.Env):
     
     # 奖励函数设计
     def _compute_reward(self):
-        """连续梯度距离奖励 + 成功奖励"""
+        """奖励 = 距离惩罚 + 平滑成功奖励 + 进步奖励"""
         ee_pos = self.data.site_xpos[self.ee_site_id]
         distance = np.linalg.norm(ee_pos - self.target_pos)
 
-        # 核心：负距离平方 → 连续梯度，越靠近梯度越大
-        # distance 0.5m → -25,  0.3m → -9,  0.1m → -1,  0.02m → -0.04
-        reward = -100 * distance ** 2
+        # 1. 距离惩罚（缩放到合理范围）
+        # d=0.5m → -2.5,  d=0.3m → -0.9,  d=0.1m → -0.1,  d=0.05m → -0.025
+        reward = -10 * distance ** 2
 
-        # 成功奖励（到达 0.02m 以内）
+        # 2. 平滑成功奖励（在success_dis范围内线性递增）
+        # d=0.05 → +0,  d=0.025 → +5,  d=0.01 → +8,  d=0 → +10
         if distance < self.success_dis:
-            reward += 100.0
+            reward += 10.0 * (1.0 - distance / self.success_dis)
 
-        # 步惩罚（鼓励尽快到达）
-        reward -= 0.01
+        # 3. 进步奖励（比上一步更近就加分）
+        if self.prev_distance is not None:
+            progress = self.prev_distance - distance
+            reward += 5.0 * progress  # 每靠近1cm多得0.05分
 
+        self.prev_distance = distance
         return reward
     
     def _check_success(self):
