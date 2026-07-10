@@ -31,7 +31,7 @@ class CurriculumCallback(BaseCallback):
 
     def _on_step(self) -> bool:
         if self.n_calls % self.eval_interval == 0 and self.current_idx < len(self.thresholds) - 1:
-            # 评估当前成功率
+            # 评估当前成功率（向量化环境返回格式：obs, rewards, dones, infos）
             success_count = 0
             n_eval = 20
             for _ in range(n_eval):
@@ -39,9 +39,9 @@ class CurriculumCallback(BaseCallback):
                 done = False
                 while not done:
                     action, _ = self.model.predict(obs, deterministic=True)
-                    obs, _, terminated, truncated, info = self.eval_env.step(action)
-                    done = terminated or truncated
-                    if info and info[0].get("is_success", False):
+                    obs, _, dones, infos = self.eval_env.step(action)
+                    done = dones[0]
+                    if infos[0].get("is_success", False):
                         success_count += 1
                         break
             success_rate = success_count / n_eval

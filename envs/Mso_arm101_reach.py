@@ -165,7 +165,8 @@ class SoArm101ReachEnv(gym.Env):
         if self.render_mode == "human":
             self.render()
 
-        return obs,reward,terminated,truncated,{}
+        info = {"is_success": self._check_success()}
+        return obs, reward, terminated, truncated, info
 
 
     def render(self):
