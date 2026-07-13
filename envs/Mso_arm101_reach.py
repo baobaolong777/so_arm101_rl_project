@@ -46,48 +46,40 @@ class SoArm101ReachEnv(gym.Env):
             low=-np.inf, high=np.inf, shape=(18,), dtype=np.float32
         )
 
-        # 工作空间约束
-        self.workspace = {
-            'x': [-0.3, 0.3],    # x 范围
-            'y': [-0.3, 0.3],    # y 范围
-            'z': [0.1, 0.5]      # z 范围（桌面以上）
-        }
-
         # 目标位置
         self.target_pos = None
         self.max_steps = 300
         self.current_step = 0
-        self.success_dis = 0.1  # 课程学习：先从0.1m开始，逐步收紧到0.02m
-        self.prev_distance = None  # 用于计算进步奖励
+        self.success_dis = 0.02
     
     def _get_valid_target(self) -> np.ndarray:
-        """生成有效目标点（在工作空间内且可达）"""
-        max_attempts = 100  # 最大尝试次数
-        for _ in range(max_attempts):
-            target = self.np_random.uniform(
-                low=[self.workspace['x'][0], self.workspace['y'][0], self.workspace['z'][0]],
-                high=[self.workspace['x'][1], self.workspace['y'][1], self.workspace['z'][1]]
-            )
-            # 检查是否可达（简单距离验证）
-            if self._is_target_reachable(target):
-                return target.astype(np.float32)
+        """用正向运动学生成可达目标：随机关节角度 → 计算末端位置"""
+        # 保存当前状态
+        qpos_backup = self.data.qpos[:6].copy()
 
-        # 如果多次尝试都失败，返回一个默认可达点
-        return np.array([0.0, 0.0, 0.3], dtype=np.float32)
+        for _ in range(100):
+            # 随机前5个关节（不含gripper）
+            for i in range(5):
+                jnt_range = self.model.jnt_range[i]
+                self.data.qpos[i] = self.np_random.uniform(jnt_range[0], jnt_range[1])
+            self.data.qpos[5] = 0.0  # gripper 闭合
 
-    def _is_target_reachable(self, target_pos: np.ndarray) -> bool:
-        """检查目标点是否可达（简单距离验证）"""
-        # 假设机械臂臂长约为 0.4m
-        min_reach = 0.05  # 最小距离（太近会碰撞）
-        max_reach = 0.45  # 最大距离（臂长限制）
+            # 正向运动学计算末端位置
+            mujoco.mj_forward(self.model, self.data)
+            ee_pos = self.data.site_xpos[self.ee_site_id].copy()
 
-        distance = np.linalg.norm(target_pos)
+            # 检查是否在合理范围（地面以上 + 远离底座）
+            dist_from_base = np.linalg.norm(ee_pos)
+            if ee_pos[2] > 0.05 and dist_from_base > 0.1:
+                # 恢复状态
+                self.data.qpos[:6] = qpos_backup
+                mujoco.mj_forward(self.model, self.data)
+                return ee_pos.astype(np.float32)
 
-        # 检查是否在地面以上
-        if target_pos[2] < 0.02:  # 至少 2cm 在地面以上
-            return False
-
-        return min_reach <= distance <= max_reach
+        # fallback
+        self.data.qpos[:6] = qpos_backup
+        mujoco.mj_forward(self.model, self.data)
+        return np.array([0.0, 0.0, 0.25], dtype=np.float32)
 
     def reset(self,seed=None, options=None):
         super().reset(seed=seed)
@@ -98,40 +90,14 @@ class SoArm101ReachEnv(gym.Env):
         # 生成有效目标位置（在工作空间内）
         self.target_pos = self._get_valid_target()
 
-        # 随机初始化关节角度，确保末端在地面以上
-        max_attempts = 100
-        for attempt in range(max_attempts):
-            # 随机初始化关节角度（只控制前5个关节，不包括gripper）
-            for i in range(5):  # shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll
-                joint_range = self.model.jnt_range[i]
-                self.data.qpos[i] = self.np_random.uniform(joint_range[0],joint_range[1])
-
-            # 固定 gripper 为张开状态
-            self.data.qpos[5] = 0.0  # gripper 关节
-
-            # 更新关节后必须调用 mj_forward 更新末端位置
-            mujoco.mj_forward(self.model,self.data)
-
-            # 检查末端执行器是否在地面以上
-            ee_pos = self.data.site_xpos[self.ee_site_id]
-            if ee_pos[2] > 0.02:  # 至少 2cm 在地面以上
-                break
-
-            # 如果尝试多次都失败，使用默认的 home 位置
-            if attempt == max_attempts - 1:
-                # 使用一个安全的默认位置
-                self.data.qpos[0] = 0.0      # shoulder_pan
-                self.data.qpos[1] = -0.5     # shoulder_lift（稍微向下）
-                self.data.qpos[2] = 0.8      # elbow_flex（弯曲）
-                self.data.qpos[3] = -0.3     # wrist_flex
-                self.data.qpos[4] = 0.0      # wrist_roll
-                self.data.qpos[5] = 0.0      # gripper
-                mujoco.mj_forward(self.model,self.data)
+        # 从 home 位置出发，随机偏移小角度（保证起点靠近目标）
+        home = np.array([0.0, -0.5, 0.8, -0.3, 0.0])
+        noise = self.np_random.uniform(-0.3, 0.3, size=5)
+        self.data.qpos[:5] = home + noise
+        self.data.qpos[5] = 0.0  # gripper
+        mujoco.mj_forward(self.model, self.data)
 
         self.current_step = 0
-        # 初始化prev_distance用于进步奖励
-        ee_pos = self.data.site_xpos[self.ee_site_id]
-        self.prev_distance = np.linalg.norm(ee_pos - self.target_pos)
 
         # 更新目标球位置（使用mocap_pos）
         if self.target_mocap_pos_id is not None:
@@ -148,8 +114,8 @@ class SoArm101ReachEnv(gym.Env):
             ctrl_high = self.model.actuator_ctrlrange[i,1]
             self.data.ctrl[i] = ctrl_low + (action[i] + 1.0) * 0.5 * (ctrl_high - ctrl_low)
 
-        # 每个action执行50个物理步（0.1s），让位置控制器有足够时间驱动关节到位
-        physics_steps_per_action = 50
+        # 每个action执行20个物理步（0.04s），让位置控制器有时间驱动关节到位
+        physics_steps_per_action = 20
         for _ in range(physics_steps_per_action):
             mujoco.mj_step(self.model, self.data)
 
@@ -159,7 +125,7 @@ class SoArm101ReachEnv(gym.Env):
         # 计算奖励
         reward = self._compute_reward()
 
-        terminated = False  # 到达目标不终止，让智能体在目标附近积累正奖励
+        terminated = self._check_success()  # 到达目标即终止
         truncated = self.current_step >= self.max_steps
 
         if self.render_mode == "human":
@@ -196,25 +162,24 @@ class SoArm101ReachEnv(gym.Env):
     
     # 奖励函数设计
     def _compute_reward(self):
-        """奖励 = 距离惩罚 + 平滑成功奖励 + 进步奖励"""
+        """距离惩罚 + 成功奖励 + 夹爪惩罚"""
         ee_pos = self.data.site_xpos[self.ee_site_id]
         distance = np.linalg.norm(ee_pos - self.target_pos)
 
-        # 1. 距离惩罚（缩放到合理范围）
-        # d=0.5m → -2.5,  d=0.3m → -0.9,  d=0.1m → -0.1,  d=0.05m → -0.025
-        reward = -10 * distance ** 2
+        # 核心：负距离平方
+        reward = -100 * distance ** 2
 
-        # 2. 平滑成功奖励（在success_dis范围内线性递增）
-        # d=0.05 → +0,  d=0.025 → +5,  d=0.01 → +8,  d=0 → +10
+        # 成功奖励
         if distance < self.success_dis:
-            reward += 10.0 * (1.0 - distance / self.success_dis)
+            reward += 100.0
 
-        # 3. 进步奖励（比上一步更近就加分）
-        if self.prev_distance is not None:
-            progress = self.prev_distance - distance
-            reward += 5.0 * progress  # 每靠近1cm多得0.05分
+        # 夹爪惩罚（鼓励保持闭合）
+        gripper_angle = abs(self.data.qpos[5])
+        reward -= 2.0 * gripper_angle
 
-        self.prev_distance = distance
+        # 步惩罚
+        reward -= 0.01
+
         return reward
     
     def _check_success(self):

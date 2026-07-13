@@ -1,3 +1,0 @@
-# 创建Gymnasium环境
-1.需要写reset(),step(),render()以及close()
-2.首先初始化使用mujoco加载模型，随后设置末端执行器,再定义动作空间和状态空间
