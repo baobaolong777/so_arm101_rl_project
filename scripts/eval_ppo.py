@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""评估 PPO best_model 在 0.02m 阈值下的成功率"""
+"""评估 PPO 模型在 0.02m 阈值下的成功率"""
 import sys, io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 import os
@@ -21,18 +21,23 @@ def main():
     success_count = 0
     distances = []
 
-    # 用原始环境评估（不用 VecNormalize 包装环境）
+    # 用原始环境评估
     raw_env = make_env()
 
-    # 加载 VecNormalize 只用于归一化观测（不包装环境）
+    # 加载归一化器
     temp_env = DummyVecEnv([make_env])
-    vn = GoalPreservingVecNormalize.load("vec_normalize/vec_normalize_ppo.pkl", temp_env)
+    vn = GoalPreservingVecNormalize.load(
+        os.path.join(os.path.dirname(__file__), "..", "vec_normalize", "vec_normalize_ppo.pkl"),
+        temp_env
+    )
     vn.training = False
 
-    # 加载模型（不需要 env 参数）
-    model = PPO.load("models/ppo_my_env_reach")
+    # 加载模型
+    model = PPO.load(
+        os.path.join(os.path.dirname(__file__), "..", "models", "ppo_my_env_reach")
+    )
 
-    print(f"Evaluating best_model at 0.02m threshold ({n_eval} episodes)...")
+    print(f"Evaluating PPO model at 0.02m threshold ({n_eval} episodes)...")
 
     for ep in range(n_eval):
         obs_raw, _ = raw_env.reset()
@@ -40,12 +45,10 @@ def main():
         truncated = False
 
         while not done and not truncated:
-            # 用 VecNormalize 归一化观测后预测
             obs_norm = vn.normalize_obs(obs_raw.reshape(1, -1))
             action, _ = model.predict(obs_norm, deterministic=True)
             obs_raw, reward, done, truncated, info = raw_env.step(action[0])
 
-        # 用原始坐标计算距离
         ee_pos = raw_env.data.site_xpos[raw_env.ee_site_id]
         target_pos = raw_env.target_pos
         dist = np.linalg.norm(ee_pos - target_pos)
@@ -66,7 +69,7 @@ def main():
     print(f"Final Results ({n_eval} episodes, deterministic):")
     print(f"  Success rate: {final_rate:.1%}")
     print(f"  Success count: {success_count}/{n_eval}")
-    print(f"  Avg distance: {avg_dist:.4f}m ± {std_dist:.4f}m")
+    print(f"  Avg distance: {avg_dist:.4f}m +/- {std_dist:.4f}m")
     print(f"  Min distance: {min(distances):.4f}m")
     print(f"  Max distance: {max(distances):.4f}m")
     print(f"  Median distance: {np.median(distances):.4f}m")
