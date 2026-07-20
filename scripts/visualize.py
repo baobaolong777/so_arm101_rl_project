@@ -47,7 +47,7 @@ def main():
     time.sleep(1)
 
     # 4. 运行10个episode
-    for episode in range(100):
+    for episode in range(30):
         print(f"\n--- Episode {episode + 1} ---")
 
         # 重置 vec_env（策略用）
